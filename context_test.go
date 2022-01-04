@@ -6,7 +6,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/hairyhenderson/go-fsimpl"
 	"github.com/hairyhenderson/gomplate/v3/data"
+	"github.com/hairyhenderson/gomplate/v3/internal/datafs"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -30,6 +32,9 @@ func TestCreateContext(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, c)
 
+	fsmux := fsimpl.NewMux()
+	fsmux.Add(datafs.EnvFS)
+
 	fooURL := "env:///foo?type=application/yaml"
 	barURL := "env:///bar?type=application/yaml"
 	uf, _ := url.Parse(fooURL)
@@ -39,6 +44,7 @@ func TestCreateContext(t *testing.T) {
 			"foo": {URL: uf},
 			".":   {URL: ub},
 		},
+		FSMux: fsmux,
 	}
 	os.Setenv("foo", "foo: bar")
 	defer os.Unsetenv("foo")

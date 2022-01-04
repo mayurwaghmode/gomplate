@@ -2,21 +2,28 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/fs"
+	"io/ioutil"
 	"mime"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/spf13/afero"
-
 	"github.com/pkg/errors"
 
+	"github.com/hairyhenderson/go-fsimpl"
+	"github.com/hairyhenderson/go-fsimpl/awssmfs"
+	"github.com/hairyhenderson/go-fsimpl/blobfs"
+	"github.com/hairyhenderson/go-fsimpl/filefs"
+	"github.com/hairyhenderson/go-fsimpl/gitfs"
+	"github.com/hairyhenderson/go-fsimpl/httpfs"
+	"github.com/hairyhenderson/go-fsimpl/vaultfs"
 	"github.com/hairyhenderson/gomplate/v3/internal/config"
+	"github.com/hairyhenderson/gomplate/v3/internal/datafs"
 	"github.com/hairyhenderson/gomplate/v3/libkv"
-	"github.com/hairyhenderson/gomplate/v3/vault"
 )
 
 func regExtension(ext, typ string) {
@@ -41,26 +48,11 @@ func (d *Data) registerReaders() {
 	d.sourceReaders = make(map[string]func(context.Context, *Source, ...string) ([]byte, error))
 
 	d.sourceReaders["aws+smp"] = readAWSSMP
-	d.sourceReaders["aws+sm"] = readAWSSecretsManager
 	d.sourceReaders["consul"] = readConsul
 	d.sourceReaders["consul+http"] = readConsul
 	d.sourceReaders["consul+https"] = readConsul
-	d.sourceReaders["env"] = readEnv
-	d.sourceReaders["file"] = readFile
-	d.sourceReaders["http"] = readHTTP
-	d.sourceReaders["https"] = readHTTP
 	d.sourceReaders["merge"] = d.readMerge
 	d.sourceReaders["stdin"] = readStdin
-	d.sourceReaders["vault"] = readVault
-	d.sourceReaders["vault+http"] = readVault
-	d.sourceReaders["vault+https"] = readVault
-	d.sourceReaders["s3"] = readBlob
-	d.sourceReaders["gs"] = readBlob
-	d.sourceReaders["git"] = readGit
-	d.sourceReaders["git+file"] = readGit
-	d.sourceReaders["git+http"] = readGit
-	d.sourceReaders["git+https"] = readGit
-	d.sourceReaders["git+ssh"] = readGit
 }
 
 // lookupReader - return the reader function for the given scheme
@@ -83,10 +75,17 @@ type Data struct {
 	Sources map[string]*Source
 
 	sourceReaders map[string]func(context.Context, *Source, ...string) ([]byte, error)
-	cache         map[string][]byte
+	cache         map[string]*fileContent
 
 	// headers from the --datasource-header/-H option that don't reference datasources from the commandline
 	ExtraHeaders map[string]http.Header
+
+	FSMux fsimpl.FSMux
+}
+
+type fileContent struct {
+	b           []byte
+	contentType string
 }
 
 // Cleanup - clean up datasources before shutting the process down - things
@@ -140,89 +139,23 @@ func FromConfig(ctx context.Context, cfg *config.Config) *Data {
 // Source - a data source
 // Deprecated: will be replaced in future
 type Source struct {
-	Alias             string
-	URL               *url.URL
-	Header            http.Header             // used for http[s]: URLs, nil otherwise
-	fs                afero.Fs                // used for file: URLs, nil otherwise
-	hc                *http.Client            // used for http[s]: URLs, nil otherwise
-	vc                *vault.Vault            // used for vault: URLs, nil otherwise
-	kv                *libkv.LibKV            // used for consul:, etcd:, zookeeper: URLs, nil otherwise
-	asmpg             awssmpGetter            // used for aws+smp:, nil otherwise
-	awsSecretsManager awsSecretsManagerGetter // used for aws+sm, nil otherwise
-	mediaType         string
+	Alias     string
+	URL       *url.URL
+	Header    http.Header  // used for http[s]: URLs, nil otherwise
+	kv        *libkv.LibKV // used for consul:, etcd:, zookeeper: & boltdb: URLs, nil otherwise
+	asmpg     awssmpGetter // used for aws+smp:, nil otherwise
+	mediaType string
 }
 
 func (s *Source) inherit(parent *Source) {
-	s.fs = parent.fs
-	s.hc = parent.hc
-	s.vc = parent.vc
 	s.kv = parent.kv
 	s.asmpg = parent.asmpg
 }
 
 func (s *Source) cleanup() {
-	if s.vc != nil {
-		s.vc.Logout()
-	}
 	if s.kv != nil {
 		s.kv.Logout()
 	}
-}
-
-// mimeType returns the MIME type to use as a hint for parsing the datasource.
-// It's expected that the datasource will have already been read before
-// this function is called, and so the Source's Type property may be already set.
-//
-// The MIME type is determined by these rules:
-// 1. the 'type' URL query parameter is used if present
-// 2. otherwise, the Type property on the Source is used, if present
-// 3. otherwise, a MIME type is calculated from the file extension, if the extension is registered
-// 4. otherwise, the default type of 'text/plain' is used
-func (s *Source) mimeType(arg string) (mimeType string, err error) {
-	if len(arg) > 0 {
-		if strings.HasPrefix(arg, "//") {
-			arg = arg[1:]
-		}
-		if !strings.HasPrefix(arg, "/") {
-			arg = "/" + arg
-		}
-	}
-	argURL, err := url.Parse(arg)
-	if err != nil {
-		return "", fmt.Errorf("mimeType: couldn't parse arg %q: %w", arg, err)
-	}
-	mediatype := argURL.Query().Get("type")
-	if mediatype == "" {
-		mediatype = s.URL.Query().Get("type")
-	}
-
-	if mediatype == "" {
-		mediatype = s.mediaType
-	}
-
-	// make it so + doesn't need to be escaped
-	mediatype = strings.ReplaceAll(mediatype, " ", "+")
-
-	if mediatype == "" {
-		ext := filepath.Ext(argURL.Path)
-		mediatype = mime.TypeByExtension(ext)
-	}
-
-	if mediatype == "" {
-		ext := filepath.Ext(s.URL.Path)
-		mediatype = mime.TypeByExtension(ext)
-	}
-
-	if mediatype != "" {
-		t, _, err := mime.ParseMediaType(mediatype)
-		if err != nil {
-			return "", errors.Wrapf(err, "MIME type was %q", mediatype)
-		}
-		mediatype = t
-		return mediatype, nil
-	}
-
-	return textMimetype, nil
 }
 
 // String is the method to format the flag's value, part of the flag.Value interface.
@@ -281,41 +214,33 @@ func (d *Data) lookupSource(alias string) (*Source, error) {
 	return source, nil
 }
 
-func (d *Data) readDataSource(ctx context.Context, alias string, args ...string) (data, mimeType string, err error) {
+func (d *Data) readDataSource(ctx context.Context, alias string, args ...string) (*fileContent, error) {
 	source, err := d.lookupSource(alias)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	b, err := d.readSource(ctx, source, args...)
+	fc, err := d.readSource(ctx, source, args...)
 	if err != nil {
-		return "", "", errors.Wrapf(err, "Couldn't read datasource '%s'", alias)
+		return nil, errors.Wrapf(err, "Couldn't read datasource '%s'", alias)
 	}
 
-	subpath := ""
-	if len(args) > 0 {
-		subpath = args[0]
-	}
-	mimeType, err = source.mimeType(subpath)
-	if err != nil {
-		return "", "", err
-	}
-	return string(b), mimeType, nil
+	return fc, nil
 }
 
 // Include -
 func (d *Data) Include(alias string, args ...string) (string, error) {
-	data, _, err := d.readDataSource(d.Ctx, alias, args...)
-	return data, err
+	fc, err := d.readDataSource(d.Ctx, alias, args...)
+	return string(fc.b), err
 }
 
 // Datasource -
 func (d *Data) Datasource(alias string, args ...string) (interface{}, error) {
-	data, mimeType, err := d.readDataSource(d.Ctx, alias, args...)
+	fc, err := d.readDataSource(d.Ctx, alias, args...)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseData(mimeType, data)
+	return parseData(fc.contentType, string(fc.b))
 }
 
 func parseData(mimeType, s string) (out interface{}, err error) {
@@ -361,9 +286,9 @@ func (d *Data) DatasourceReachable(alias string, args ...string) bool {
 
 // readSource returns the (possibly cached) data from the given source,
 // as referenced by the given args
-func (d *Data) readSource(ctx context.Context, source *Source, args ...string) ([]byte, error) {
+func (d *Data) readSource(ctx context.Context, source *Source, args ...string) (*fileContent, error) {
 	if d.cache == nil {
-		d.cache = make(map[string][]byte)
+		d.cache = make(map[string]*fileContent)
 	}
 	cacheKey := source.Alias
 	for _, v := range args {
@@ -373,16 +298,107 @@ func (d *Data) readSource(ctx context.Context, source *Source, args ...string) (
 	if ok {
 		return cached, nil
 	}
-	r, err := d.lookupReader(source.URL.Scheme)
-	if err != nil {
-		return nil, errors.Wrap(err, "Datasource not yet supported")
+
+	var data []byte
+
+	// TODO: initialize this elsewhere?
+	if d.FSMux == nil {
+		d.FSMux = fsimpl.NewMux()
+		d.FSMux.Add(filefs.FS)
+		d.FSMux.Add(httpfs.FS)
+		d.FSMux.Add(blobfs.FS)
+		d.FSMux.Add(gitfs.FS)
+		d.FSMux.Add(vaultfs.FS)
+		d.FSMux.Add(awssmfs.FS)
+		d.FSMux.Add(datafs.EnvFS)
 	}
-	data, err := r(ctx, source, args...)
+
+	arg := ""
+	if len(args) > 0 {
+		arg = args[0]
+	}
+
+	u, err := resolveURL(source.URL, arg)
 	if err != nil {
 		return nil, err
 	}
-	d.cache[cacheKey] = data
-	return data, nil
+
+	// possible type hint
+	mimeType := u.Query().Get("type")
+
+	u, fname := splitFSMuxURL(u)
+
+	fsys, err := d.FSMux.Lookup(u.String())
+	if err == nil {
+		f, err := fsys.Open(fname)
+		if err != nil {
+			return nil, fmt.Errorf("open (url: %q, name: %q): %w", u, fname, err)
+		}
+
+		fi, err := f.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("stat (url: %q, name: %q): %w", u, fname, err)
+		}
+
+		if mimeType == "" {
+			mimeType = fsimpl.ContentType(fi)
+		}
+
+		if fi.IsDir() {
+			des, err := fs.ReadDir(fsys, fname)
+			if err != nil {
+				return nil, fmt.Errorf("readDir (url: %q, name: %s): %w", u, fname, err)
+			}
+
+			entries := make([]string, len(des))
+			for i, e := range des {
+				entries[i] = e.Name()
+			}
+			data, err = json.Marshal(entries)
+			if err != nil {
+				return nil, fmt.Errorf("json.Marshal: %w", err)
+			}
+
+			mimeType = jsonArrayMimetype
+		} else {
+			data, err = ioutil.ReadAll(f)
+
+			if err != nil {
+				return nil, fmt.Errorf("read (url: %q, name: %s): %w", u, fname, err)
+			}
+		}
+
+		fc := &fileContent{data, mimeType}
+		d.cache[cacheKey] = fc
+
+		return fc, nil
+	}
+
+	// TODO: get rid of this, I guess?
+	r, err := d.lookupReader(u.Scheme)
+	if err != nil {
+		return nil, fmt.Errorf("lookupReader (url: %q): %w", u, err)
+	}
+	data, err = r(ctx, source, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	if mimeType == "" {
+		subpath := ""
+		if len(args) > 0 {
+			subpath = args[0]
+		}
+
+		mimeType, err = source.mimeType(subpath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	fc := &fileContent{data, mimeType}
+	d.cache[cacheKey] = fc
+	return fc, nil
 }
 
 // Show all datasources  -
@@ -393,4 +409,66 @@ func (d *Data) ListDatasources() []string {
 	}
 	sort.Strings(datasources)
 	return datasources
+}
+
+// resolveURL parses the relative URL rel against base, and returns the
+// resolved URL. Differs from url.ResolveReference in that query parameters are
+// added. In case of duplicates, params from rel are used.
+func resolveURL(base *url.URL, rel string) (*url.URL, error) {
+	relURL, err := url.Parse(rel)
+	if err != nil {
+		return nil, err
+	}
+
+	out := base.ResolveReference(relURL)
+	if base.RawQuery != "" {
+		bq := base.Query()
+		rq := relURL.Query()
+		for k := range rq {
+			bq.Set(k, rq.Get(k))
+		}
+		out.RawQuery = bq.Encode()
+	}
+
+	return out, nil
+}
+
+// splitFSMuxURL splits a URL into a filesystem URL and a relative file path
+func splitFSMuxURL(in *url.URL) (*url.URL, string) {
+	u := *in
+
+	// base := path.Base(u.Path)
+	// if path.Dir(u.Path) == path.Clean(u.Path) {
+	// 	base = "."
+	// }
+
+	base := strings.TrimPrefix(u.Path, "/")
+
+	if base == "" && u.Opaque != "" {
+		base = u.Opaque
+		u.Opaque = ""
+	}
+
+	if base == "" {
+		base = "."
+	}
+
+	u.Path = "/"
+
+	// handle some env-specific idiosyncrasies
+	// if u.Scheme == "env" {
+	// 	base = in.Path
+	// 	base = strings.TrimPrefix(base, "/")
+	// 	if base == "" {
+	// 		base = in.Opaque
+	// 	}
+	// }
+	// if u.Scheme == "vault" && !strings.HasSuffix(u.Path, "/") && u.Path != "" {
+	// 	u.Path += "/"
+	// }
+	// if u.Scheme == "s3" && !strings.HasSuffix(u.Path, "/") && u.Path != "" {
+	// 	u.Path += "/"
+	// }
+
+	return &u, base
 }

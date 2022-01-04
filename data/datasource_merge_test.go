@@ -2,13 +2,15 @@ package data
 
 import (
 	"context"
+	"io/fs"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
-	"github.com/spf13/afero"
-
+	"github.com/hairyhenderson/go-fsimpl"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -21,31 +23,27 @@ func TestReadMerge(t *testing.T) {
 
 	mergedContent := "goodnight: moon\nhello: world\n"
 
-	fs := afero.NewMemMapFs()
+	fsys := fstest.MapFS{}
+	fsys["tmp"] = &fstest.MapFile{Mode: fs.ModeDir | 0777}
+	fsys["tmp/jsonfile.json"] = &fstest.MapFile{Data: []byte(jsonContent)}
+	fsys["tmp/array.json"] = &fstest.MapFile{Data: []byte(arrayContent)}
+	fsys["tmp/yamlfile.yaml"] = &fstest.MapFile{Data: []byte(yamlContent)}
+	fsys["tmp/textfile.txt"] = &fstest.MapFile{Data: []byte(`plain text...`)}
 
-	_ = fs.Mkdir("/tmp", 0777)
-	f, _ := fs.Create("/tmp/jsonfile.json")
-	_, _ = f.WriteString(jsonContent)
-	f, _ = fs.Create("/tmp/array.json")
-	_, _ = f.WriteString(arrayContent)
-	f, _ = fs.Create("/tmp/yamlfile.yaml")
-	_, _ = f.WriteString(yamlContent)
-	f, _ = fs.Create("/tmp/textfile.txt")
-	_, _ = f.WriteString(`plain text...`)
-
+	// workding dir with volume name trimmed
 	wd, _ := os.Getwd()
-	_ = fs.Mkdir(wd, 0777)
-	f, _ = fs.Create(filepath.Join(wd, "jsonfile.json"))
-	_, _ = f.WriteString(jsonContent)
-	f, _ = fs.Create(filepath.Join(wd, "array.json"))
-	_, _ = f.WriteString(arrayContent)
-	f, _ = fs.Create(filepath.Join(wd, "yamlfile.yaml"))
-	_, _ = f.WriteString(yamlContent)
-	f, _ = fs.Create(filepath.Join(wd, "textfile.txt"))
-	_, _ = f.WriteString(`plain text...`)
+	vol := filepath.VolumeName(wd)
+	wd = wd[len(vol)+1:]
+
+	fsys[path.Join(wd, "jsonfile.json")] = &fstest.MapFile{Data: []byte(jsonContent)}
+	fsys[path.Join(wd, "array.json")] = &fstest.MapFile{Data: []byte(arrayContent)}
+	fsys[path.Join(wd, "yamlfile.yaml")] = &fstest.MapFile{Data: []byte(yamlContent)}
+	fsys[path.Join(wd, "textfile.txt")] = &fstest.MapFile{Data: []byte(`plain text...`)}
+
+	fsmux := fsimpl.NewMux()
+	fsmux.Add(fsimpl.WrappedFSProvider(&fsys, "file"))
 
 	source := &Source{Alias: "foo", URL: mustParseURL("merge:file:///tmp/jsonfile.json|file:///tmp/yamlfile.yaml")}
-	source.fs = fs
 	d := &Data{
 		Sources: map[string]*Source{
 			"foo":       source,
@@ -56,6 +54,7 @@ func TestReadMerge(t *testing.T) {
 			"badtype":   {Alias: "badtype", URL: mustParseURL("file:///tmp/textfile.txt?type=foo/bar")},
 			"array":     {Alias: "array", URL: mustParseURL("file:///tmp/array.json?type=" + url.QueryEscape(jsonArrayMimetype))},
 		},
+		FSMux: fsmux,
 	}
 
 	actual, err := d.readMerge(ctx, source)

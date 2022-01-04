@@ -3,18 +3,22 @@ package data
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
-	"runtime"
 	"testing"
+	"testing/fstest"
 
+	"github.com/hairyhenderson/go-fsimpl"
 	"github.com/hairyhenderson/gomplate/v3/internal/config"
-	"github.com/spf13/afero"
 
 	"github.com/stretchr/testify/assert"
 )
 
-const osWindows = "windows"
+func mustParseURL(in string) *url.URL {
+	u, _ := url.Parse(in)
+	return u
+}
 
 func TestNewData(t *testing.T) {
 	d, err := NewData(nil, nil)
@@ -42,55 +46,50 @@ func TestNewData(t *testing.T) {
 }
 
 func TestDatasource(t *testing.T) {
-	setup := func(ext, mime string, contents []byte) *Data {
+	setup := func(t *testing.T, ext string, contents []byte) *Data {
+		t.Helper()
 		fname := "foo." + ext
-		fs := afero.NewMemMapFs()
-		var uPath string
-		var f afero.File
-		if runtime.GOOS == osWindows {
-			_ = fs.Mkdir("C:\\tmp", 0777)
-			f, _ = fs.Create("C:\\tmp\\" + fname)
-			uPath = "C:/tmp/" + fname
-		} else {
-			_ = fs.Mkdir("/tmp", 0777)
-			f, _ = fs.Create("/tmp/" + fname)
-			uPath = "/tmp/" + fname
-		}
-		_, _ = f.Write(contents)
+
+		fsys := fstest.MapFS{}
+		fsys["tmp"] = &fstest.MapFile{Mode: fs.ModeDir | 0777}
+		fsys["tmp/"+fname] = &fstest.MapFile{Data: contents}
+
+		fsmux := fsimpl.NewMux()
+		fsmux.Add(fsimpl.WrappedFSProvider(fsys, "file"))
 
 		sources := map[string]*Source{
 			"foo": {
-				Alias:     "foo",
-				URL:       &url.URL{Scheme: "file", Path: uPath},
-				mediaType: mime,
-				fs:        fs,
+				Alias: "foo",
+				URL:   mustParseURL("file:///tmp/" + fname),
 			},
 		}
-		return &Data{Sources: sources}
+		return &Data{Sources: sources, FSMux: fsmux}
 	}
-	test := func(ext, mime string, contents []byte, expected interface{}) {
-		data := setup(ext, mime, contents)
 
-		actual, err := data.Datasource("foo")
+	test := func(t *testing.T, ext, mime string, contents []byte, expected interface{}) {
+		t.Helper()
+		data := setup(t, ext, contents)
+
+		actual, err := data.Datasource("foo", "?type="+mime)
 		assert.NoError(t, err)
 		assert.Equal(t, expected, actual)
 	}
 
-	testObj := func(ext, mime string, contents []byte) {
-		test(ext, mime, contents,
+	testObj := func(t *testing.T, ext, mime string, contents []byte) {
+		test(t, ext, mime, contents,
 			map[string]interface{}{
 				"hello": map[string]interface{}{"cruel": "world"},
 			})
 	}
 
-	testObj("json", jsonMimetype, []byte(`{"hello":{"cruel":"world"}}`))
-	testObj("yml", yamlMimetype, []byte("hello:\n  cruel: world\n"))
-	test("json", jsonMimetype, []byte(`[1, "two", true]`),
+	testObj(t, "json", jsonMimetype, []byte(`{"hello":{"cruel":"world"}}`))
+	testObj(t, "yml", yamlMimetype, []byte("hello:\n  cruel: world\n"))
+	test(t, "json", jsonMimetype, []byte(`[1, "two", true]`),
 		[]interface{}{1, "two", true})
-	test("yaml", yamlMimetype, []byte("---\n- 1\n- two\n- true\n"),
+	test(t, "yaml", yamlMimetype, []byte("---\n- 1\n- two\n- true\n"),
 		[]interface{}{1, "two", true})
 
-	d := setup("", textMimetype, nil)
+	d := setup(t, "", nil)
 	actual, err := d.Datasource("foo")
 	assert.NoError(t, err)
 	assert.Equal(t, "", actual)
@@ -100,35 +99,24 @@ func TestDatasource(t *testing.T) {
 }
 
 func TestDatasourceReachable(t *testing.T) {
-	fname := "foo.json"
-	fs := afero.NewMemMapFs()
-	var uPath string
-	var f afero.File
-	if runtime.GOOS == osWindows {
-		_ = fs.Mkdir("C:\\tmp", 0777)
-		f, _ = fs.Create("C:\\tmp\\" + fname)
-		uPath = "C:/tmp/" + fname
-	} else {
-		_ = fs.Mkdir("/tmp", 0777)
-		f, _ = fs.Create("/tmp/" + fname)
-		uPath = "/tmp/" + fname
-	}
-	_, _ = f.Write([]byte("{}"))
+	fsys := fstest.MapFS{}
+	fsys["tmp/foo.json"] = &fstest.MapFile{Data: []byte("{}")}
+
+	fsmux := fsimpl.NewMux()
+	fsmux.Add(fsimpl.WrappedFSProvider(fsys, "file"))
 
 	sources := map[string]*Source{
 		"foo": {
 			Alias:     "foo",
-			URL:       &url.URL{Scheme: "file", Path: uPath},
+			URL:       mustParseURL("file:///tmp/foo.json"),
 			mediaType: jsonMimetype,
-			fs:        fs,
 		},
 		"bar": {
 			Alias: "bar",
 			URL:   &url.URL{Scheme: "file", Path: "/bogus"},
-			fs:    fs,
 		},
 	}
-	data := &Data{Sources: sources}
+	data := &Data{Sources: sources, FSMux: fsmux}
 
 	assert.True(t, data.DatasourceReachable("foo"))
 	assert.False(t, data.DatasourceReachable("bar"))
@@ -144,35 +132,22 @@ func TestDatasourceExists(t *testing.T) {
 }
 
 func TestInclude(t *testing.T) {
-	ext := "txt"
 	contents := "hello world"
-	fname := "foo." + ext
-	fs := afero.NewMemMapFs()
 
-	var uPath string
-	var f afero.File
-	if runtime.GOOS == osWindows {
-		_ = fs.Mkdir("C:\\tmp", 0777)
-		f, _ = fs.Create("C:\\tmp\\" + fname)
-		uPath = "C:/tmp/" + fname
-	} else {
-		_ = fs.Mkdir("/tmp", 0777)
-		f, _ = fs.Create("/tmp/" + fname)
-		uPath = "/tmp/" + fname
-	}
-	_, _ = f.Write([]byte(contents))
+	fsys := fstest.MapFS{}
+	fsys["tmp/foo.txt"] = &fstest.MapFile{Data: []byte(contents)}
+
+	fsmux := fsimpl.NewMux()
+	fsmux.Add(fsimpl.WrappedFSProvider(fsys, "file"))
 
 	sources := map[string]*Source{
 		"foo": {
 			Alias:     "foo",
-			URL:       &url.URL{Scheme: "file", Path: uPath},
+			URL:       mustParseURL("file:///tmp/foo.txt"),
 			mediaType: textMimetype,
-			fs:        fs,
 		},
 	}
-	data := &Data{
-		Sources: sources,
-	}
+	data := &Data{Sources: sources, FSMux: fsmux}
 	actual, err := data.Include("foo")
 	assert.NoError(t, err)
 	assert.Equal(t, contents, actual)
@@ -243,103 +218,6 @@ func TestDefineDatasource(t *testing.T) {
 	m, err := s.mimeType("")
 	assert.NoError(t, err)
 	assert.Equal(t, "application/x-env", m)
-}
-
-func TestMimeType(t *testing.T) {
-	s := &Source{URL: mustParseURL("http://example.com/list?type=a/b/c")}
-	_, err := s.mimeType("")
-	assert.Error(t, err)
-
-	data := []struct {
-		url       string
-		mediaType string
-		expected  string
-	}{
-		{"http://example.com/foo.json",
-			"",
-			jsonMimetype},
-		{"http://example.com/foo.json",
-			"text/foo",
-			"text/foo"},
-		{"http://example.com/foo.json?type=application/yaml",
-			"text/foo",
-			"application/yaml"},
-		{"http://example.com/list?type=application/array%2Bjson",
-			"text/foo",
-			"application/array+json"},
-		{"http://example.com/list?type=application/array+json",
-			"",
-			"application/array+json"},
-		{"http://example.com/unknown",
-			"",
-			"text/plain"},
-	}
-
-	for i, d := range data {
-		d := d
-		t.Run(fmt.Sprintf("%d:%q,%q==%q", i, d.url, d.mediaType, d.expected), func(t *testing.T) {
-			s := &Source{URL: mustParseURL(d.url), mediaType: d.mediaType}
-			mt, err := s.mimeType("")
-			assert.NoError(t, err)
-			assert.Equal(t, d.expected, mt)
-		})
-	}
-}
-
-func TestMimeTypeWithArg(t *testing.T) {
-	s := &Source{URL: mustParseURL("http://example.com")}
-	_, err := s.mimeType("h\nttp://foo")
-	assert.Error(t, err)
-
-	data := []struct {
-		url       string
-		mediaType string
-		arg       string
-		expected  string
-	}{
-		{"http://example.com/unknown",
-			"",
-			"/foo.json",
-			"application/json"},
-		{"http://example.com/unknown",
-			"",
-			"foo.json",
-			"application/json"},
-		{"http://example.com/",
-			"text/foo",
-			"/foo.json",
-			"text/foo"},
-		{"git+https://example.com/myrepo",
-			"",
-			"//foo.yaml",
-			"application/yaml"},
-		{"http://example.com/foo.json",
-			"",
-			"/foo.yaml",
-			"application/yaml"},
-		{"http://example.com/foo.json?type=application/array+yaml",
-			"",
-			"/foo.yaml",
-			"application/array+yaml"},
-		{"http://example.com/foo.json?type=application/array+yaml",
-			"",
-			"/foo.yaml?type=application/yaml",
-			"application/yaml"},
-		{"http://example.com/foo.json?type=application/array+yaml",
-			"text/plain",
-			"/foo.yaml?type=application/yaml",
-			"application/yaml"},
-	}
-
-	for i, d := range data {
-		d := d
-		t.Run(fmt.Sprintf("%d:%q,%q,%q==%q", i, d.url, d.mediaType, d.arg, d.expected), func(t *testing.T) {
-			s := &Source{URL: mustParseURL(d.url), mediaType: d.mediaType}
-			mt, err := s.mimeType(d.arg)
-			assert.NoError(t, err)
-			assert.Equal(t, d.expected, mt)
-		})
-	}
 }
 
 func TestFromConfig(t *testing.T) {
@@ -425,4 +303,80 @@ func TestListDatasources(t *testing.T) {
 	data := &Data{Sources: sources}
 
 	assert.Equal(t, []string{"bar", "foo"}, data.ListDatasources())
+}
+
+func TestSplitFSMuxURL(t *testing.T) {
+	t.Skip()
+	testdata := []struct {
+		in   string
+		arg  string
+		url  string
+		file string
+	}{
+		{"http://example.com/foo.json", "", "http://example.com/", "foo.json"},
+		{
+			"http://example.com/foo.json?type=application/array+yaml",
+			"",
+			"http://example.com/?type=application/array+yaml",
+			"foo.json",
+		},
+		{
+			"vault:///secret/a/b/c", "",
+			"vault:///",
+			"secret/a/b/c",
+		},
+		{
+			"vault:///secret/a/b/", "",
+			"vault:///",
+			"secret/a/b",
+		},
+		{
+			"s3://bucket/a/b/", "",
+			"s3://bucket/",
+			"a/b",
+		},
+		{
+			"vault:///", "foo/bar",
+			"vault:///",
+			"foo/bar",
+		},
+		{
+			"consul://myhost/foo/?q=1", "bar/baz",
+			"consul://myhost/?q=1",
+			"foo/bar/baz",
+		},
+		{
+			"consul://myhost/foo/?q=1", "bar/baz",
+			"consul://myhost/?q=1",
+			"foo/bar/baz",
+		},
+		{
+			"git+https://example.com/myrepo", "//foo.yaml",
+			"git+https://example.com/myrepo", "foo.yaml",
+		},
+		{
+			"ssh://git@github.com/hairyhenderson/go-which.git//a/b/",
+			"c/d?q=1",
+			"ssh://git@github.com/hairyhenderson/go-which.git?q=1",
+			"a/b/c/d",
+		},
+	}
+
+	for _, d := range testdata {
+		u, err := url.Parse(d.in)
+		assert.NoError(t, err)
+		url, file := splitFSMuxURL(u)
+		assert.Equal(t, d.url, url.String())
+		assert.Equal(t, d.file, file)
+	}
+}
+
+func TestResolveURL(t *testing.T) {
+	out, err := resolveURL(mustParseURL("http://example.com/foo.json"), "bar.json")
+	assert.NoError(t, err)
+	assert.Equal(t, "http://example.com/bar.json", out.String())
+
+	out, err = resolveURL(mustParseURL("http://example.com/a/b/?n=2"), "bar.json?q=1")
+	assert.NoError(t, err)
+	assert.Equal(t, "http://example.com/a/b/bar.json?n=2&q=1", out.String())
 }

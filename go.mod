@@ -9,8 +9,6 @@ require (
 	github.com/aws/aws-sdk-go v1.44.32
 	github.com/docker/libkv v0.2.2-0.20180912205406-458977154600
 	github.com/fullsailor/pkcs7 v0.0.0-20190404230743-d7302db945fa
-	github.com/go-git/go-billy/v5 v5.3.1
-	github.com/go-git/go-git/v5 v5.4.2
 	github.com/google/uuid v1.3.0
 	github.com/gosimple/slug v1.12.0
 	github.com/hairyhenderson/go-fsimpl v0.0.0-20220529183339-9deae3e35047
@@ -27,7 +25,6 @@ require (
 	github.com/stretchr/testify v1.7.2
 	github.com/ugorji/go/codec v1.2.7
 	github.com/zealic/xignore v0.3.3
-	gocloud.dev v0.25.1-0.20220408200107-09b10f7359f7
 	golang.org/x/crypto v0.0.0-20220525230936-793ad666bf5e
 	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
@@ -46,6 +43,17 @@ require (
 	cloud.google.com/go/compute v1.6.1 // indirect
 	cloud.google.com/go/iam v0.3.0 // indirect
 	cloud.google.com/go/storage v1.22.1 // indirect
+	github.com/Azure/azure-pipeline-go v0.2.3 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v0.21.1 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v0.8.3 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.3.0 // indirect
+	github.com/Azure/azure-storage-blob-go v0.14.0 // indirect
+	github.com/Azure/go-autorest v14.2.0+incompatible // indirect
+	github.com/Azure/go-autorest/autorest v0.11.24 // indirect
+	github.com/Azure/go-autorest/autorest/adal v0.9.18 // indirect
+	github.com/Azure/go-autorest/autorest/date v0.3.0 // indirect
+	github.com/Azure/go-autorest/logger v0.2.1 // indirect
+	github.com/Azure/go-autorest/tracing v0.6.0 // indirect
 	github.com/Microsoft/go-winio v0.5.2 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20220517143526-88bb52951d5b // indirect
 	github.com/acomagu/bufpipe v1.0.3 // indirect
@@ -66,6 +74,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.13.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.26.10 // indirect
+	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.15.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.11.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.16.6 // indirect
 	github.com/aws/smithy-go v1.11.2 // indirect
@@ -75,6 +84,9 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-git/gcfg v1.5.0 // indirect
+	github.com/go-git/go-billy/v5 v5.3.1 // indirect
+	github.com/go-git/go-git/v5 v5.4.2 // indirect
+	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
@@ -107,6 +119,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
+	github.com/mattn/go-ieproxy v0.0.6 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
@@ -126,6 +139,7 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go4.org/intern v0.0.0-20220301175310-a089fc204883 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20211027215541-db492cf91b37 // indirect
+	gocloud.dev v0.25.1-0.20220408200107-09b10f7359f7 // indirect
 	golang.org/x/net v0.0.0-20220526153639-5463443f8c37 // indirect
 	golang.org/x/oauth2 v0.0.0-20220524215830-622c5d57e401 // indirect
 	golang.org/x/time v0.0.0-20220411224347-583f2d630306 // indirect

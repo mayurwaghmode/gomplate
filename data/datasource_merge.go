@@ -2,8 +2,12 @@ package data
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
+	"path"
 	"strings"
 
+	"github.com/hairyhenderson/go-fsimpl"
 	"github.com/hairyhenderson/gomplate/v3/coll"
 	"github.com/hairyhenderson/gomplate/v3/internal/config"
 
@@ -24,7 +28,7 @@ func (d *Data) readMerge(ctx context.Context, source *Source, args ...string) ([
 	opaque := source.URL.Opaque
 	parts := strings.Split(opaque, "|")
 	if len(parts) < 2 {
-		return nil, errors.New("need at least 2 datasources to merge")
+		return nil, fmt.Errorf("need at least 2 datasources to merge")
 	}
 	data := make([]map[string]interface{}, len(parts))
 	for i, part := range parts {
@@ -43,15 +47,31 @@ func (d *Data) readMerge(ctx context.Context, source *Source, args ...string) ([
 		}
 		subSource.inherit(source)
 
-		b, err := d.readSource(ctx, subSource)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Couldn't read datasource '%s'", part)
+		u := *subSource.URL
+
+		base := path.Base(u.Path)
+		if base == "/" {
+			base = "."
 		}
 
-		mimeType, err := subSource.mimeType("")
+		u.Path = path.Dir(u.Path)
+
+		fsys, err := d.FSMux.Lookup(u.String())
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read datasource %s", subSource.URL)
+			return nil, fmt.Errorf("lookup %s: %w", u.String(), err)
 		}
+
+		b, err := fs.ReadFile(fsys, base)
+		if err != nil {
+			return nil, fmt.Errorf("readFile (fs: %q, name: %q): %w", &u, base, err)
+		}
+
+		fi, err := fs.Stat(fsys, base)
+		if err != nil {
+			return nil, fmt.Errorf("stat (fs: %q, name: %q): %w", &u, base, err)
+		}
+
+		mimeType := fsimpl.ContentType(fi)
 
 		data[i], err = parseMap(mimeType, string(b))
 		if err != nil {

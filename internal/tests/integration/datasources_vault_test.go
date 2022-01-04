@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 	"os/user"
 	"path"
@@ -63,7 +64,7 @@ func startVault(t *testing.T) (*fs.Dir, *vaultClient) {
 		"-dev",
 		"-dev-root-token-id="+vaultRootToken,
 		"-dev-leased-kv",
-		"-log-level=err",
+		"-log-level=trace",
 		"-dev-listen-address="+vaultAddr,
 		"-config="+tmpDir.Join("config.json"),
 	)
@@ -84,6 +85,8 @@ func startVault(t *testing.T) (*fs.Dir, *vaultClient) {
 		result.Cmd.Wait()
 
 		result.Assert(t, icmd.Expected{ExitCode: 0})
+
+		fmt.Println(result.Combined())
 
 		// restore old token if it was backed up
 		u, _ := user.Current()
