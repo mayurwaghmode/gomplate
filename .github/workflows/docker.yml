@@ -48,7 +48,7 @@ jobs:
           echo "major_version=${tag%%\.*}" >> $GITHUB_ENV
         fi
         echo $GITHUB_ENV
-      if: github.repository == 'hairyhenderson/gomplate'
+      if: github.repository == 'mayurwaghmode/gomplate'
     - name: Build & Push (non-main)
       run: |
         set -ex
@@ -56,33 +56,33 @@ jobs:
 
         docker buildx imagetools create --dry-run -t localhost:5000/gomplate:dev localhost:5000/gomplate:latest
         docker buildx imagetools create --dry-run -t localhost:5000/gomplate:dev-alpine localhost:5000/gomplate:alpine
-      if: github.repository != 'hairyhenderson/gomplate' || (github.ref != 'refs/heads/main' && env.is_tag != 'true')
+      if: github.repository != 'mayurwaghmode/gomplate' || (github.ref != 'refs/heads/main' && env.is_tag != 'true')
     - name: Login to GHCR
       uses: docker/login-action@v2.0.0
       with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      if: github.repository == 'hairyhenderson/gomplate' && (github.ref == 'refs/heads/main' || env.is_tag == 'true')
+      if: github.repository == 'mayurwaghmode/gomplate' && (github.ref == 'refs/heads/main' || env.is_tag == 'true')
     - name: Login to DockerHub
       uses: docker/login-action@v2.0.0
       with:
           # NOTE: DOCKERHUB_TOKEN and DOCKERHUB_USERNAME must be present in https://github.com/hairyhenderson/gomplate/settings
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      if: github.repository == 'hairyhenderson/gomplate' && (github.ref == 'refs/heads/main' || env.is_tag == 'true')
+      if: github.repository == 'mayurwaghmode/gomplate' && (github.ref == 'refs/heads/main' || env.is_tag == 'true')
     - name: Build & Push (main)
       run: |
-        make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=hairyhenderson/gomplate BUILDX_ACTION=--push
-        make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=ghcr.io/hairyhenderson/gomplate BUILDX_ACTION=--push
-      if: github.repository == 'hairyhenderson/gomplate' && github.ref == 'refs/heads/main'
+        make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=mwaghmodepersistent/gomplate BUILDX_ACTION=--push
+        make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=ghcr.io/mayurwaghmode/gomplate BUILDX_ACTION=--push
+      if: github.repository == 'mayurwaghmode/gomplate' && github.ref == 'refs/heads/main'
     - name: Build & Push (tagged release)
       run: |
-        make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=hairyhenderson/gomplate BUILDX_ACTION=--push
+        make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=mwaghmodepersistent/gomplate BUILDX_ACTION=--push
         make docker-multi COMMIT=${{ github.sha }} DOCKER_REPO=ghcr.io/hairyhenderson/gomplate BUILDX_ACTION=--push
 
         set -x
-        export repo=hairyhenderson/gomplate
+        export repo=mwaghmodepersistent/gomplate
         docker buildx imagetools create -t ${repo}:stable ${repo}:latest
         docker buildx imagetools create -t ${repo}:${git_tag} ${repo}:latest
         docker buildx imagetools create -t ${repo}:${major_version} ${repo}:latest
@@ -92,7 +92,7 @@ jobs:
         docker buildx imagetools create -t ${repo}:${major_version}-alpine ${repo}:alpine
 
         # and now GHCR
-        export repo=ghcr.io/hairyhenderson/gomplate
+        export repo=ghcr.io/mayurwaghmode/gomplate
         docker buildx imagetools create -t ${repo}:stable ${repo}:latest
         docker buildx imagetools create -t ${repo}:${git_tag} ${repo}:latest
         docker buildx imagetools create -t ${repo}:${major_version} ${repo}:latest
@@ -100,4 +100,4 @@ jobs:
         docker buildx imagetools create -t ${repo}:stable-alpine ${repo}:alpine
         docker buildx imagetools create -t ${repo}:${git_tag}-alpine ${repo}:alpine
         docker buildx imagetools create -t ${repo}:${major_version}-alpine ${repo}:alpine
-      if: github.repository == 'hairyhenderson/gomplate' && env.is_tag == 'true'
+      if: github.repository == 'mayurwaghmode/gomplate' && env.is_tag == 'true'
